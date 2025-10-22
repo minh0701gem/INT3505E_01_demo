@@ -1,89 +1,173 @@
-from flask import Flask, request, jsonify
-from db import get_db, close_db, init_db
-from datetime import datetime
+# app.py
+from flask import Flask, jsonify, request, abort
+from flasgger import Swagger, swag_from
 
 app = Flask(__name__)
-app.teardown_appcontext(close_db)
 
-@app.route('/')
-def hello():
-    return 'Hello, World!'
+# --- Cấu hình Flasgger (OpenAPI) ---
+app.config['SWAGGER'] = {
+    'title': 'Library Management API',
+    'uiversion': 3,
+    'openapi': '3.0.2',
+    'description': 'An API for managing books in a library.',
+    'version': '1.0.0',
+    'contact': {
+        'name': 'Your Name',
+        'url': 'https://github.com/minh0701gem'
+    },
+    'servers': [
+        {
+            'url': 'http://127.0.0.1:5000',
+            'description': 'Development server'
+        }
+    ]
+}
+swagger = Swagger(app)
 
-# Khởi tạo database
-@app.route("/init-db", methods=["GET"])
-def init_database():
-    init_db(app)
-    return jsonify({"message": "Database initialized!"})
+# --- Dữ liệu giả lập để demo ---
+# Trong dự án thực tế, bạn sẽ gọi các hàm từ db.py
+books_data = [
+    {'id': 1, 'title': 'The Lord of the Rings', 'author': 'J.R.R. Tolkien', 'published_year': 1954},
+    {'id': 2, 'title': 'Dune', 'author': 'Frank Herbert', 'published_year': 1965}
+]
+next_book_id = 3
 
-#  USERS
-@app.route("/users", methods=["POST"])
-def create_user():
-    data = request.json
-    db = get_db()
-    db.execute("INSERT INTO users (name) VALUES (?)", (data["name"],))
-    db.commit()
-    return jsonify({"message": "User created!"})
 
-# BOOKS
+# --- Định nghĩa các API Endpoint ---
 
-# getBook
-@app.route("/books/getallbooks", methods=["GET"])
+@app.route('/books', methods=['GET'])
 def get_books():
-    db = get_db()
-    books = db.execute("SELECT * FROM books").fetchall()
-    return jsonify([dict(b) for b in books])
+    """
+    Get a list of all books.
+    This endpoint returns a list of all books in the library.
+    ---
+    tags:
+      - Books
+    responses:
+      200:
+        description: A list of books.
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/Book'
+    """
+    # Logic thực tế: gọi hàm từ db.py để lấy danh sách sách
+    return jsonify(books_data)
 
-# addBook
-@app.route("/books/add", methods=["POST"])
+
+@app.route('/books/<int:book_id>', methods=['GET'])
+def get_book(book_id):
+    """
+    Get a single book by its ID.
+    Returns the details of a specific book.
+    ---
+    tags:
+      - Books
+    parameters:
+      - name: book_id
+        in: path
+        required: true
+        description: The ID of the book to retrieve.
+        schema:
+          type: integer
+    responses:
+      200:
+        description: The book details.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Book'
+      404:
+        description: Book not found.
+    """
+    # Logic thực tế: tìm sách trong DB
+    book = next((book for book in books_data if book['id'] == book_id), None)
+    if book is None:
+        abort(404, description="Book not found")
+    return jsonify(book)
+
+
+@app.route('/books', methods=['POST'])
 def add_book():
-    data = request.json
-    db = get_db()
-    db.execute("INSERT INTO books (title, author) VALUES (?, ?)",
-               (data["title"], data["author"]))
-    db.commit()
-    return jsonify({"message": "Book added!", "data": {"title": data["title"], "author": data["author"]}})
+    """
+    Add a new book to the library.
+    Creates a new book record.
+    ---
+    tags:
+      - Books
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/NewBook'
+    responses:
+      201:
+        description: The book was successfully created.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Book'
+    """
+    global next_book_id
+    new_book_data = request.json
+    new_book = {
+        'id': next_book_id,
+        'title': new_book_data['title'],
+        'author': new_book_data['author'],
+        'published_year': new_book_data['published_year']
+    }
+    books_data.append(new_book)
+    next_book_id += 1
+    return jsonify(new_book), 201
 
-# editBook
-@app.route("/books/edit/<int:id>", methods=["PUT"])
-def update_book(id):
-    data = request.json
-    db = get_db()
-    db.execute("UPDATE books SET title=?, author=? WHERE id=?",
-               (data["title"], data["author"], id))
-    db.commit()
-    return jsonify({"message": "Book updated!","data": { "id" : id, "new_title": data["title"], "new_author": data["author"]}})
 
-@app.route("/books/delete/<int:id>", methods=["DELETE"])
-def delete_book(id):
-    db = get_db()
-    db.execute("DELETE FROM books WHERE id=?", (id,))
-    db.commit()
-    return jsonify({"message": "Book deleted!"})
+# --- Định nghĩa các Schema (Model) cho OpenAPI ---
+# Điều này giúp tái sử dụng và làm cho spec của bạn sạch sẽ hơn
 
-@app.route("/borrow", methods=["POST"])
-def borrow_book():
-    data = request.json
-    db = get_db()
-    # Kiểm tra sách còn không
-    book = db.execute("SELECT available FROM books WHERE id=?", (data["book_id"],)).fetchone()
-    if not book or book["available"] == 0:
-        return jsonify({"error": "Book not available"}), 400
+# Viết schema dưới dạng docstring của một hàm không dùng đến
+@app.route('/schemas')
+def schemas():
+    """
+    ---
+    components:
+      schemas:
+        Book:
+          type: object
+          properties:
+            id:
+              type: integer
+              description: The unique identifier of a book.
+              example: 1
+            title:
+              type: string
+              description: The title of the book.
+              example: 'The Lord of the Rings'
+            author:
+              type: string
+              description: The author of the book.
+              example: 'J.R.R. Tolkien'
+            published_year:
+              type: integer
+              description: The year the book was published.
+              example: 1954
+        NewBook:
+          type: object
+          properties:
+            title:
+              type: string
+              description: The title of the book.
+            author:
+              type: string
+              description: The author of the book.
+            published_year:
+              type: integer
+              description: The year the book was published.
+    """
+    pass # Hàm này không cần làm gì cả
 
-    db.execute("INSERT INTO borrows (user_id, book_id, borrow_date) VALUES (?, ?, ?)",
-               (data["user_id"], data["book_id"], datetime.now().isoformat()))
-    db.execute("UPDATE books SET available=0 WHERE id=?", (data["book_id"],))
-    db.commit()
-    return jsonify({"message": "Book borrowed!"})
 
-@app.route("/return", methods=["POST"])
-def return_book():
-    data = request.json
-    db = get_db()
-    db.execute("UPDATE borrows SET return_date=? WHERE user_id=? AND book_id=? AND return_date IS NULL",
-               (datetime.now().isoformat(), data["user_id"], data["book_id"]))
-    db.execute("UPDATE books SET available=1 WHERE id=?", (data["book_id"],))
-    db.commit()
-    return jsonify({"message": "Book returned!"})
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     app.run(debug=True)
