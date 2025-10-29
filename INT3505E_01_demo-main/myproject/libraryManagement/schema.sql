@@ -38,3 +38,12 @@ CREATE TABLE loans (
     FOREIGN KEY (book_id) REFERENCES books (id),
     FOREIGN KEY (member_id) REFERENCES members (id)
 );
+-- (Giữ lại các bảng cũ của bạn, ví dụ bảng 'books')
+
+-- Thêm bảng mới cho người dùng
+CREATE TABLE user (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  username TEXT UNIQUE NOT NULL,
+  password TEXT NOT NULL, -- Sẽ lưu password đã được hash
+  role TEXT NOT NULL DEFAULT 'member' -- Vai trò: 'member' hoặc 'admin'
+);
