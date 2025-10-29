@@ -82,3 +82,36 @@ def create_book(title, isbn, published_year, quantity, author_id):
 
 # Bạn có thể viết thêm các hàm cho Member và Loan theo logic tương tự
 # Ví dụ: get_all_members, create_member, create_loan, ...
+# (Giữ lại các hàm cũ liên quan đến sách)
+
+import sqlite3
+import bcrypt # Cần cài đặt: pip install bcrypt
+
+# ... (Hàm get_db() của bạn) ...
+
+def create_user(username, password, role='member'):
+    """Thêm người dùng mới vào database với mật khẩu đã được hash."""
+    db = get_db()
+    hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+    try:
+        db.execute(
+            "INSERT INTO user (username, password, role) VALUES (?, ?, ?)",
+            (username, hashed_password, role),
+        )
+        db.commit()
+    except db.IntegrityError:
+        # Xử lý lỗi nếu username đã tồn tại
+        return None
+    # Lấy lại user vừa tạo để trả về
+    user = db.execute("SELECT * FROM user WHERE username = ?", (username,)).fetchone()
+    return user
+
+def get_user_by_username(username):
+    """Tìm người dùng theo username."""
+    db = get_db()
+    user = db.execute("SELECT * FROM user WHERE username = ?", (username,)).fetchone()
+    return user
+
+def check_password(hashed_password, user_password):
+    """Kiểm tra mật khẩu người dùng nhập vào có khớp với hash trong DB không."""
+    return bcrypt.checkpw(user_password.encode('utf-8'), hashed_password)
