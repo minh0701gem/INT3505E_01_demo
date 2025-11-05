@@ -1,0 +1,53 @@
+openapi: 3.0.0
+info:
+  title: Library Management API
+  version: 1.0.0
+  description: API for a simple library management system.
+
+servers:
+  - url: /api
+
+paths:
+  /books:
+    get:
+      summary: Get a list of all books
+      operationId: app.list_books  # <-- Trỏ đến hàm list_books trong file app.py
+      responses:
+        '200':
+          description: A list of books
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Book'
+    post:
+      summary: Add a new book
+      operationId: app.add_book
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NewBook'
+      responses:
+        '201':
+          description: Book created
+  
+  # ... Định nghĩa các path khác cho /authors, /login, ...
+
+components:
+  schemas:
+    Book:
+      type: object
+      properties:
+        id: { type: integer }
+        title: { type: string }
+        # ... các thuộc tính khác
+    NewBook:
+      type: object
+      required: [title, author_id]
+      properties:
+        title: { type: string }
+        author_id: { type: integer }
+    # ... các schema khác

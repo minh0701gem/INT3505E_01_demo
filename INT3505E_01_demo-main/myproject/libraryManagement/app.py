@@ -5,6 +5,18 @@ from flask_jwt_extended import create_access_token, create_refresh_token, jwt_re
 
 import db  # Import file db.py của bạn
 
+import connexion
+
+# Tạo ứng dụng Connexion, nó sẽ tự động đọc file openapi.yaml
+# Connexion app sẽ tự tạo một Flask app bên trong nó
+connexion_app = connexion.App(__name__, specification_dir='./')
+
+# Thêm API từ file YAML, nó sẽ tự động kết nối các operationId với các hàm
+connexion_app.add_api('openapi.yaml')
+
+# Lấy ra Flask app bên trong để có thể dùng với các thư viện khác nếu cần
+app = connexion_app.app 
+# Hoặc nếu bạn không dùng Connexion, bạn có thể tạo Flask app trực tiếp như sau:
 app = Flask(__name__)
 
 # --- CẤU HÌNH JWT (JSON Web Token) ---
@@ -271,6 +283,29 @@ def add_book():
 def schemas():
     """... (nội dung schemas không đổi) ..."""
     pass
+
+# Import các model
+from models import Book, Author
+
+def list_books():
+    books_qs = Book.objects.select_related() # Lấy sách và thông tin tác giả
+    # Chuyển đổi queryset thành list of dicts để jsonify
+    books_list = [book.to_mongo().to_dict() for book in books_qs]
+    return books_list, 200
+
+def add_book(body):
+    data = body
+    author = Author.objects(id=data['author_id']).first()
+    if not author:
+        return {"error": "Author not found"}, 404
+    
+    new_book = Book(
+        title=data['title'],
+        published_year=data.get('published_year'),
+        author=author
+    )
+    new_book.save()
+    return new_book.to_mongo().to_dict(), 201
 
 if __name__ == '__main__':
     app.run(debug=True) 
