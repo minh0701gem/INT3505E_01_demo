@@ -1,45 +1,27 @@
-# app.py
+# app.py (ĐÃ SỬA LỖI HOÀN CHỈNH)
+
 from flask import Flask, jsonify, request, abort
 from flasgger import Swagger
-from flask_jwt_extended import create_access_token, create_refresh_token, jwt_required, get_jwt, get_jwt_identity, JWTManager
+from flask_jwt_extended import create_access_token, create_refresh_token, jwt_required, get_jwt_identity, JWTManager
+from . import db
+# ======================================================================
+# --- KHỞI TẠO VÀ CẤU HÌNH APP (TẤT CẢ TRONG MỘT CHỖ) ---
+# ======================================================================
 
-import db  # Import file db.py của bạn
-
-import connexion
-
-# Tạo ứng dụng Connexion, nó sẽ tự động đọc file openapi.yaml
-# Connexion app sẽ tự tạo một Flask app bên trong nó
-connexion_app = connexion.App(__name__, specification_dir='./')
-
-# Thêm API từ file YAML, nó sẽ tự động kết nối các operationId với các hàm
-connexion_app.add_api('openapi.yaml')
-
-# Lấy ra Flask app bên trong để có thể dùng với các thư viện khác nếu cần
-app = connexion_app.app 
-# Hoặc nếu bạn không dùng Connexion, bạn có thể tạo Flask app trực tiếp như sau:
 app = Flask(__name__)
+
+# --- CẤU HÌNH DATABASE ---
+# Đặt tên file CSDL. Nó sẽ được tạo trong thư mục instance của Flask.
+app.config['DATABASE'] = 'library.sqlite'
+# Đăng ký các hàm quản lý database (close_db) và lệnh CLI (init-db) với app
+db.init_app(app)
 
 # --- CẤU HÌNH JWT (JSON Web Token) ---
 # Thay thế "your-super-secret-key" bằng một chuỗi bí mật, ngẫu nhiên và an toàn
 app.config["JWT_SECRET_KEY"] = "your-super-secret-key-change-this-in-production"
 jwt = JWTManager(app)
 
-# --- CẤU HÌNH FLASGGER (OpenAPI) ---
-# Thêm cấu hình bảo mật cho Swagger UI để có thể test các API được bảo vệ
-swagger_config = {
-    "headers": [],
-    "specs": [
-        {
-            "endpoint": 'apispec_1',
-            "route": '/apispec_1.json',
-            "rule_filter": lambda rule: True,
-            "model_filter": lambda tag: True,
-        }
-    ],
-    "static_url_path": "/flasgger_static",
-    "swagger_ui": True,
-    "specs_route": "/apidocs/"
-}
+# --- CẤU HÌNH FLASGGER (OpenAPI / Swagger) ---
 template = {
     "swagger": "2.0",
     "info": {
@@ -55,15 +37,20 @@ template = {
             "description": "Enter your bearer token in the format **Bearer &lt;token&gt;**"
         }
     },
+    "security": [
+        {
+            "Bearer": []
+        }
+    ]
 }
-app.config['SWAGGER'] = {
-    'title': 'Library Management API',
-    'uiversion': 3,
-}
-swagger = Swagger(app, config=swagger_config, template=template)
+swagger = Swagger(app, template=template)
 
 
-# === CÁC API MỚI: USER AUTHENTICATION ===
+# ======================================================================
+# --- CÁC API ENDPOINTS ---
+# ======================================================================
+
+# === API AUTHENTICATION ===
 
 @app.route('/register', methods=['POST'])
 def register():
@@ -72,19 +59,26 @@ def register():
     ---
     tags:
       - Authentication
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            type: object
-            required: [username, password]
-            properties:
-              username: { type: string }
-              password: { type: string, format: password }
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+          type: object
+          required: [username, password]
+          properties:
+            username:
+              type: string
+              example: newuser
+            password:
+              type: string
+              format: password
+              example: mysecretpassword
     responses:
       201:
         description: User created successfully.
+      400:
+        description: Missing username or password.
       409:
         description: Username already exists.
     """
@@ -105,19 +99,31 @@ def login():
     ---
     tags:
       - Authentication
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            type: object
-            required: [username, password]
-            properties:
-              username: { type: string }
-              password: { type: string, format: password }
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+          type: object
+          required: [username, password]
+          properties:
+            username:
+              type: string
+              example: adminuser
+            password:
+              type: string
+              format: password
+              example: adminpass
     responses:
       200:
-        description: Login successful.
+        description: Login successful. Returns access and refresh tokens.
+        schema:
+          type: object
+          properties:
+            access_token:
+              type: string
+            refresh_token:
+              type: string
       401:
         description: Bad username or password.
     """
@@ -127,9 +133,7 @@ def login():
         
     user = db.get_user_by_username(data['username'])
 
-    # user['password'] là hash, data['password'] là mật khẩu thuần
     if user and db.check_password(user['password'], data['password']):
-        # Tạo identity cho token, chứa các thông tin cần thiết về user
         user_identity = {
             "id": user['id'],
             "username": user['username'],
@@ -142,20 +146,18 @@ def login():
     return jsonify({"msg": "Bad username or password"}), 401
 
 
-# === CÁC API ĐÃ ĐƯỢC BẢO VỆ VÀ PHÂN QUYỀN ===
+# === CÁC API ĐƯỢC BẢO VỆ VÀ PHÂN QUYỀN ===
 
 # --- API Endpoints cho Author ---
 
 @app.route('/authors', methods=['GET'])
-@jwt_required()  # YÊU CẦU ĐĂNG NHẬP
+@jwt_required()
 def list_authors():
     """
     Get a list of all authors. (Requires login)
     ---
     tags:
       - Authors
-    security:
-      - Bearer: []
     responses:
       200:
         description: A list of authors.
@@ -164,21 +166,27 @@ def list_authors():
     return jsonify(authors)
 
 @app.route('/authors', methods=['POST'])
-@jwt_required()  # YÊU CẦU ĐĂNG NHẬP
+@jwt_required()
 def add_author():
     """
     Add a new author. (Requires admin role)
     ---
     tags:
       - Authors
-    security:
-      - Bearer: []
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/NewAuthor'
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+            type: object
+            required: [name]
+            properties:
+                name:
+                    type: string
+                    example: "J.K. Rowling"
+                bio:
+                    type: string
+                    example: "Author of Harry Potter series."
     responses:
       201:
         description: Author created successfully.
@@ -197,15 +205,13 @@ def add_author():
 # --- API Endpoints cho Book ---
 
 @app.route('/books', methods=['GET'])
-@jwt_required()  # YÊU CẦU ĐĂNG NHẬP
+@jwt_required()
 def list_books():
     """
     Get a list of all books. (Requires login)
     ---
     tags:
       - Books
-    security:
-      - Bearer: []
     responses:
       200:
         description: A list of books with their authors.
@@ -214,21 +220,18 @@ def list_books():
     return jsonify(books)
 
 @app.route('/books/<int:book_id>', methods=['GET'])
-@jwt_required()  # YÊU CẦU ĐĂNG NHẬP
+@jwt_required()
 def get_single_book(book_id):
     """
     Get a single book by its ID. (Requires login)
     ---
     tags:
       - Books
-    security:
-      - Bearer: []
     parameters:
       - name: book_id
         in: path
         required: true
-        schema:
-          type: integer
+        type: integer
     responses:
       200:
         description: Book details.
@@ -241,21 +244,36 @@ def get_single_book(book_id):
     return jsonify(book)
 
 @app.route('/books', methods=['POST'])
-@jwt_required()  # YÊU CẦU ĐĂNG NHẬP
+@jwt_required()
 def add_book():
     """
     Add a new book. (Requires admin role)
     ---
     tags:
       - Books
-    security:
-      - Bearer: []
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/NewBook'
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+            type: object
+            required: [title, author_id]
+            properties:
+                title:
+                    type: string
+                    example: "The Lord of the Rings"
+                isbn:
+                    type: string
+                    example: "978-0-618-05326-7"
+                published_year:
+                    type: integer
+                    example: 1954
+                quantity:
+                    type: integer
+                    example: 10
+                author_id:
+                    type: integer
+                    example: 1
     responses:
       201:
         description: Book created successfully.
@@ -277,35 +295,5 @@ def add_book():
     return jsonify({'id': new_id, 'message': 'Book created successfully'}), 201
 
 
-# --- Định nghĩa Schemas cho OpenAPI ---
-# (Phần này giữ nguyên, không cần thay đổi)
-@app.route('/schemas')
-def schemas():
-    """... (nội dung schemas không đổi) ..."""
-    pass
-
-# Import các model
-from models import Book, Author
-
-def list_books():
-    books_qs = Book.objects.select_related() # Lấy sách và thông tin tác giả
-    # Chuyển đổi queryset thành list of dicts để jsonify
-    books_list = [book.to_mongo().to_dict() for book in books_qs]
-    return books_list, 200
-
-def add_book(body):
-    data = body
-    author = Author.objects(id=data['author_id']).first()
-    if not author:
-        return {"error": "Author not found"}, 404
-    
-    new_book = Book(
-        title=data['title'],
-        published_year=data.get('published_year'),
-        author=author
-    )
-    new_book.save()
-    return new_book.to_mongo().to_dict(), 201
-
 if __name__ == '__main__':
-    app.run(debug=True) 
+    app.run(debug=True)
