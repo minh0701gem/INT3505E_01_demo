@@ -1,121 +1,144 @@
-# ==============================================================================
-# PHẦN 1: IMPORT CÁC THƯ VIỆN CẦN THIẾT
-# ==============================================================================
-import logging
-from logging.handlers import RotatingFileHandler
-from flask import Flask, jsonify, request
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
-from prometheus_flask_exporter import PrometheusMetrics
+from flask import Flask, request, jsonify, url_for
+import uuid
+import requests
+import threading
 
-# ==============================================================================
-# PHẦN 2: CẤU HÌNH BAN ĐẦU
-# ==============================================================================
-
-# --- Cấu hình logging ---
-# Định dạng log: Thời gian - Tên logger - Cấp độ - Nội dung
-log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-
-# Ghi log ra file 'app.log', xoay vòng khi file đạt 1MB, giữ lại 5 file backup
-file_handler = RotatingFileHandler('app.log', maxBytes=1024 * 1024, backupCount=5)
-file_handler.setFormatter(log_formatter)
-file_handler.setLevel(logging.INFO)
-
-# --- Khởi tạo ứng dụng Flask và các tiện ích ---
 app = Flask(__name__)
 
-# Tích hợp logger đã cấu hình vào ứng dụng Flask
-app.logger.addHandler(file_handler)
-app.logger.setLevel(logging.INFO)
+# --- DATABASE GIẢ LẬP (In-memory) ---
+books_db = {}  # Lưu sách: {id: {data}}
+webhooks_db = [] # Lưu các URL đăng ký nhận thông báo: [{'url': '...', 'event': 'new_book'}]
 
-# Tích hợp Prometheus Metrics
-# Tự động tạo endpoint /metrics để thu thập số liệu
-metrics = PrometheusMetrics(app)
+# --- HELPER: HATEOAS BUILDER ---
+def build_book_hateoas(book_id):
+    """Tạo các link liên quan cho 1 cuốn sách"""
+    return {
+        "self": url_for('get_book', book_id=book_id, _external=True),
+        "update": url_for('update_book', book_id=book_id, _external=True),
+        "delete": url_for('delete_book', book_id=book_id, _external=True),
+        "all_books": url_for('get_books', _external=True)
+    }
 
-# Tích hợp Rate Limiter
-# Sử dụng địa chỉ IP của client để xác định và giới hạn
-limiter = Limiter(
-    get_remote_address,
-    app=app,
-    default_limits=["200 per day", "50 per hour"], # Giới hạn mặc định cho mọi endpoint
-    storage_uri="memory://" # Lưu trữ trạng thái rate limit trong bộ nhớ (phù hợp cho demo)
-)
+# --- HELPER: WEBHOOK TRIGGER (EVENT-DRIVEN SIMULATION) ---
+def trigger_webhooks(event_type, payload):
+    """Gửi HTTP Request đến các bên đã đăng ký (Subscriber)"""
+    print(f"--- [EVENT] Triggering event: {event_type} ---")
+    for hook in webhooks_db:
+        if hook['event'] == event_type:
+            try:
+                # Giả lập gửi bất đồng bộ (Fire and Forget)
+                print(f"Sending webhook to: {hook['target_url']}")
+                requests.post(hook['target_url'], json=payload, timeout=1)
+            except Exception as e:
+                print(f"Failed to send webhook: {e}")
 
-# Ghi log khi ứng dụng khởi động
-app.logger.info("Ứng dụng Bookstore API đã khởi động")
-
-# ==============================================================================
-# PHẦN 3: DỮ LIỆU GIẢ LẬP (DATABASE IN-MEMORY)
-# ==============================================================================
-
-books = [
-    {"id": 1, "title": "Lược sử loài người", "author": "Yuval Noah Harari"},
-    {"id": 2, "title": "Tư duy nhanh và chậm", "author": "Daniel Kahneman"}
-]
-next_id = 3
-
-# ==============================================================================
-# PHẦN 4: ĐỊNH NGHĨA CÁC API ENDPOINTS
-# ==============================================================================
-
-@app.route('/')
-def index():
-    """Endpoint chào mừng."""
-    return "Welcome to the Bookstore API! Visit /books or /metrics."
+# ==========================================
+# 1. PATTERN: CRUD & 2. PATTERN: QUERY
+# ==========================================
 
 @app.route('/books', methods=['GET'])
-@limiter.limit("10 per minute") # Áp dụng giới hạn riêng, chặt hơn cho endpoint này
 def get_books():
     """
-    Lấy danh sách tất cả các cuốn sách.
-    Endpoint này bị giới hạn 10 request mỗi phút cho mỗi IP.
+    Query Pattern:
+    - Filtering: ?author=NamCao
+    - Pagination: ?page=1&limit=10
     """
-    app.logger.info(f"Yêu cầu lấy danh sách sách từ IP: {get_remote_address()}")
-    return jsonify(books)
+    # Lấy tham số query
+    author_filter = request.args.get('author')
+    page = int(request.args.get('page', 1))
+    limit = int(request.args.get('limit', 10))
 
-@app.route('/books/<int:book_id>', methods=['GET'])
-@limiter.limit("10 per minute")
-def get_book(book_id):
-    """
-    Lấy thông tin chi tiết của một cuốn sách theo ID.
-    """
-    book = next((book for book in books if book['id'] == book_id), None)
-    if book:
-        app.logger.info(f"Tìm thấy sách ID {book_id}")
-        return jsonify(book)
-    else:
-        app.logger.warning(f"Không tìm thấy sách với ID {book_id}")
-        return jsonify({"error": "Book not found"}), 404
+    # Lọc dữ liệu
+    results = list(books_db.values())
+    
+    if author_filter:
+        results = [b for b in results if author_filter.lower() in b['author'].lower()]
+
+    # Phân trang (Pagination)
+    start = (page - 1) * limit
+    end = start + limit
+    paginated_data = results[start:end]
+
+    return jsonify({
+        "data": paginated_data,
+        "meta": {
+            "page": page,
+            "limit": limit,
+            "total": len(results)
+        }
+    })
 
 @app.route('/books', methods=['POST'])
-@limiter.limit("5 per minute") # Endpoint tạo mới có giới hạn chặt chẽ nhất
-def add_book():
-    """
-    Thêm một cuốn sách mới.
-    Endpoint này bị giới hạn 5 request mỗi phút cho mỗi IP để chống spam.
-    """
-    global next_id
-    if not request.json or 'title' not in request.json or 'author' not in request.json:
-        app.logger.warning(f"Yêu cầu thêm sách thất bại do thiếu dữ liệu từ IP: {get_remote_address()}")
-        return jsonify({"error": "Missing title or author"}), 400
-
-    new_book = {
-        "id": next_id,
-        "title": request.json['title'],
-        "author": request.json['author']
-    }
-    books.append(new_book)
-    next_id += 1
+def create_book():
+    """Tạo sách mới và Kích hoạt Webhook"""
+    data = request.json
+    book_id = str(uuid.uuid4())
     
-    # Ghi log một audit log đơn giản
-    app.logger.info(f"[AUDIT] Sách mới đã được tạo ID {new_book['id']}: '{new_book['title']}' bởi IP {get_remote_address()}")
+    new_book = {
+        "id": book_id,
+        "title": data.get("title"),
+        "author": data.get("author"),
+        "price": data.get("price")
+    }
+    books_db[book_id] = new_book
+
+    # ---> WEBHOOK PATTERN: Kích hoạt sự kiện
+    # Sử dụng Thread để không chặn response trả về cho user (Non-blocking)
+    webhook_payload = {"event": "new_book", "book": new_book}
+    threading.Thread(target=trigger_webhooks, args=("new_book", webhook_payload)).start()
+
     return jsonify(new_book), 201
 
-# ==============================================================================
-# PHẦN 5: KHỞI CHẠY ỨNG DỤNG
-# ==============================================================================
+# ==========================================
+# 3. PATTERN: HATEOAS
+# ==========================================
+
+@app.route('/books/<book_id>', methods=['GET'])
+def get_book(book_id):
+    book = books_db.get(book_id)
+    if not book:
+        return jsonify({"error": "Not found"}), 404
+    
+    # Nhúng thêm _links vào response
+    response = book.copy()
+    response['_links'] = build_book_hateoas(book_id)
+    
+    return jsonify(response)
+
+@app.route('/books/<book_id>', methods=['PUT'])
+def update_book(book_id):
+    if book_id not in books_db:
+        return jsonify({"error": "Not found"}), 404
+    data = request.json
+    books_db[book_id].update(data)
+    return jsonify(books_db[book_id])
+
+@app.route('/books/<book_id>', methods=['DELETE'])
+def delete_book(book_id):
+    if book_id in books_db:
+        del books_db[book_id]
+        return jsonify({"message": "Deleted"}), 204
+    return jsonify({"error": "Not found"}), 404
+
+# ==========================================
+# 4. PATTERN: WEBHOOK REGISTRATION
+# ==========================================
+
+@app.route('/webhooks', methods=['POST'])
+def register_webhook():
+    """
+    Cho phép bên thứ 3 đăng ký nhận thông báo.
+    Body: { "target_url": "https://client-app.com/callback", "event": "new_book" }
+    """
+    data = request.json
+    target_url = data.get('target_url')
+    event = data.get('event')
+
+    if not target_url or not event:
+        return jsonify({"error": "Missing url or event"}), 400
+
+    webhooks_db.append({"target_url": target_url, "event": event})
+    return jsonify({"message": "Webhook registered successfully"}), 201
 
 if __name__ == '__main__':
-    # Chạy ứng dụng trên cổng 5000 và bật chế độ debug
-    # Trong môi trường production, bạn sẽ dùng một WSGI server như Gunicorn hoặc uWSGI
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(debug=True, port=5000)
