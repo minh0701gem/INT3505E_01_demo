@@ -1,0 +1,9 @@
+<!-- templates/portal.html -->
+<h1>Chào mừng đến với LibriSphere API!</h1>
+<p>Truy cập vào kho dữ liệu sách phong phú của chúng tôi.</p>
+<a href="{{ url_for('docs') }}">Xem Tài liệu</a> | <a href="{{ url_for('pricing') }}">Xem Bảng giá</a>
+<h3>Bắt đầu ngay</h3>
+<form action="/register" method="post">
+    <input type="email" name="email" placeholder="Nhập email của bạn" required>
+    <button type="submit">Nhận API Key Miễn Phí</button>
+</form>

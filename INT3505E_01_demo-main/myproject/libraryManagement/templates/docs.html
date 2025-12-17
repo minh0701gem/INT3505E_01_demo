@@ -1,0 +1,14 @@
+<!-- templates/docs.html -->
+<h1>Tài liệu API</h1>
+<h2>Xác thực</h2>
+<p>Gửi API key của bạn trong header: <code>X-API-KEY: YOUR_API_KEY</code></p>
+
+<h2>Endpoint: Tìm kiếm sách</h2>
+<p><code>GET /api/v1/books/search?q={query}</code></p>
+<ul>
+    <li><code>q</code>: Từ khóa tìm kiếm theo tên sách.</li>
+    <li><code>limit</code> (tùy chọn): Số lượng kết quả, mặc định là 10.</li>
+</ul>
+
+<h2>Endpoint: Lấy chi tiết sách</h2>
+<p><code>GET /api/v1/books/{book_id}</code></p>
